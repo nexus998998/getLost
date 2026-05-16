@@ -1,3 +1,3 @@
-module github.com/nexus998998/getLost
+module getLost
 
 go 1.26.1

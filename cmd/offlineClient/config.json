@@ -1,0 +1,9 @@
+{
+    "resulotion" : {
+        "width" : 80 , 
+        "height" : 40 
+    } , 
+    "speed_mutliplier" : 1 , 
+    "background_tile" : " ",  
+    "match_duration" : 180 
+}
