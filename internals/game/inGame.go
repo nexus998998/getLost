@@ -17,13 +17,30 @@ humble to do list :
 // how do i tell the renderer what's the current frame ?
 // simple , currentSprite
 
+type Player int
+
+const (
+	Player1 Player = iota
+	Player2
+)
+
 type Action int
 
 const (
-	Idle Action = iota
+	_ Action = iota
+	Idle
 	Walking
 	Ability1
 	Ability2
+	// etc ....
+)
+
+type Input int
+
+const (
+	None Input = iota
+	WalkLeft
+	WalkRight
 	// etc ....
 )
 
@@ -34,10 +51,45 @@ const (
 	Left
 )
 
+type bindFunc func(p1 PlayerState, p2 PlayerState) (PlayerState, PlayerState)
+
+func (i InputFuncsDependencies) IdleFunc(p1 PlayerState, p2 PlayerState) (PlayerState, PlayerState) {
+	return p1, p2
+}
+
+// we need a function to set the current animation , if it isn't the correct animation it will change it , if it is the animation then it won't
+// for that we will pretty much need an identifier to compare them , they are type struct after all
+
+// p1 is the initiator
+func (i InputFuncsDependencies) WalkLeftFunc(p1 PlayerState, p2 PlayerState) (PlayerState, PlayerState) {
+	p1Pos := &p1.Position
+	p1Pos.X -= 1
+	if p1Pos.X < 0 {
+		p1Pos.X = 0
+	}
+
+	fmt.Println("hello from my walking function")
+	fmt.Println(p1Pos.X)
+	return p1, p2
+}
+
+// so what's the solution ? , either make a middle ware that returns a function that takes the state only
+// or make a middleware
+
+type binds map[Input]bindFunc
+
+func bindControls(i InputFuncsDependencies) binds {
+	// make inputs dependencies
+	return map[Input]bindFunc{
+		WalkLeft: i.WalkLeftFunc,
+		None:     i.IdleFunc,
+	}
+}
+
+// we are going to attach this to the game , we are going to make a function that attaches global middle ware to all functions
+
+// so we want to feed this function the information that it needs using a
 // listening for input
-// when an input is inputted it will trigger a changed state or if there was input blocking (like being in a stun) it will do nothing
-// it will change the state as a whole
-// for now our mission is to make the state thing and make an MP state constructer
 
 var (
 	// use this for colors and special asciis
@@ -138,6 +190,33 @@ type Game struct {
 	Config     Config
 	State      State
 	Charecters Charecters
+	binds      binds
+}
+
+type ActionFunc func(State) State
+
+func (g Game) GetBindFunc(I Input, p Player) ActionFunc {
+
+	bindFunc := g.binds[I]
+	if p == Player1 {
+		return func(s State) State {
+			p1S, p2S := bindFunc(s.P1State, s.P2State)
+			fmt.Println(p1S)
+			return State{
+				P1State: p1S,
+				P2State: p2S,
+			}
+		}
+	}
+	// so it must be player 2 now
+	return func(s State) State {
+		p1S, p2S := bindFunc(s.P2State, s.P1State)
+
+		return State{
+			P1State: p2S,
+			P2State: p1S,
+		}
+	}
 }
 
 type Charecters struct {
@@ -184,6 +263,10 @@ type Resulotion struct {
 	Height int `json:"height"`
 }
 
+// have somewhat like an asset for animations , it will load the assets for the charecters at the start of the game , this will also allow for custom assets without recompiling the game
+// pretty much an essantial for this
+// since we are using a function to load them , we can add some syntax proccessing to it and change it's format to something better usable
+
 type PlayerState struct {
 	Position         Point
 	Action           Action
@@ -198,11 +281,15 @@ type Point struct {
 
 type frame [][]string
 
+type InputFuncsDependencies struct {
+	Cfg Config
+}
+
 // do i have to make the constructer function also add the players ?
 // welp you can't have a game without players , none of the methods would work then
 // we should throw in the default states , get the chareacters from the input and the config file path too
 func NewGame(cfgFilePath string, charecters Charecters) (Game, error) {
-
+	// composing the game
 	data, err := os.ReadFile(cfgFilePath)
 
 	if err != nil {
@@ -215,21 +302,32 @@ func NewGame(cfgFilePath string, charecters Charecters) (Game, error) {
 		return Game{}, err
 	}
 
-	return Game{
+	i := InputFuncsDependencies{
+		Cfg: c,
+	}
+
+	g := Game{
 		Config:     c,
 		State:      DefaultState,
 		Charecters: charecters,
-	}, nil
+		binds:      bindControls(i),
+	}
+
+	return g, nil
+
 }
 
 // state should tell the renderer everything it needs to render the scene
 
-// func (game Game) GenerateNextState(gs gameState, inputs playersInputs) playersState  {
-// }
+func (game Game) GenerateNextState(s State, inputs Input) State {
+	NewState := game.GetBindFunc(inputs, Player1)(s)
+	return NewState
+}
 
 // so imagine we have a 3by3 sprite
 // let's just see our old code from bombascii
 
+// this is a function i took from an old ascii project
 func (f frame) renderSprite(s []string, color string, renderPoint Point) frame {
 	outputFrame := f
 	midRowIndex := len(s) / 2
@@ -287,7 +385,7 @@ func (game Game) MakeFrame(s State) frame {
 func (f frame) RenderFrame() {
 	frameToRender := ClearAscii
 	for _, row := range f {
-		frameToRender += strings.Join(row, "") + "\n"
+		frameToRender += strings.Join(row, "") + "\r\n"
 	}
 	fmt.Println(frameToRender)
 }

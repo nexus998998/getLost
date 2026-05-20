@@ -3,12 +3,21 @@ package main
 import (
 	"getLost/internals/game"
 	"log"
+	"os"
 	"time"
+
+	"atomicgo.dev/keyboard"
+	"atomicgo.dev/keyboard/keys"
 )
 
 var (
 	configFilePath = "./config.json"
 )
+
+// keyboard.Listen
+// var binds map[]
+
+var input game.Input
 
 func main() {
 	chars := game.Charecters{
@@ -23,14 +32,31 @@ func main() {
 	g.State.P1State.CurrentAnimation = &anim
 	// game loop
 	// what's the plan , init the game , make a rendering loop and yeah that's it
+
+	go func() {
+		for {
+			keyboard.Listen(func(k keys.Key) (bool, error) {
+				if k.Code == keys.Left {
+					input = game.WalkLeft
+					return true, nil
+				}
+				if k.Code == keys.CtrlC {
+					os.Exit(0)
+				}
+
+				return true, nil
+
+			})
+		}
+	}()
+
 	for {
-		position := &g.State.P1State.Position
+		g.State = g.GenerateNextState(g.State, input)
+
 		f := g.MakeFrame(g.State)
 		f.RenderFrame()
-		position.X += 1
-		if position.X >= g.Config.Resulotion.Width {
-			position.X = 0
-		}
-		time.Sleep(time.Millisecond * 30)
+		input = game.None // thhis is confusing please change it
+		time.Sleep(time.Millisecond * 100)
+
 	}
 }

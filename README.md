@@ -7,4 +7,5 @@ anything that touches UDP TCP
 
 
 # what i will be using libraries for and why 
-user input detection ( just annoying to deal with without libraries ) 
+user input detection ( just annoying to deal with without libraries , to make crosscompatibility better ) 
+
