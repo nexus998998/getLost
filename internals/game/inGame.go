@@ -4,7 +4,10 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log"
 	"os"
+	"reflect"
+	"strconv"
 	"strings"
 )
 
@@ -13,6 +16,11 @@ humble to do list :
 1- please order structure of the code to make it more readable
 
 */
+
+const (
+	p1ID = "p1"
+	p2ID = "p2"
+)
 
 // how do i tell the renderer what's the current frame ?
 // simple , currentSprite
@@ -24,6 +32,14 @@ const (
 	Player2
 )
 
+//go:generate go-enum -f=inGame.go
+
+// ENUM(
+// Idle=1
+// Walking=2
+// Ability1=3
+// Ability2=4
+// )
 type Action int
 
 const (
@@ -35,10 +51,17 @@ const (
 	// etc ....
 )
 
+//go:generate go-enum -f=inGame.go
+
+// ENUM(
+// None
+// WalkLeft
+// WalkRight
+// )
 type Input int
 
 const (
-	None Input = iota
+	None Input = iota //
 	WalkLeft
 	WalkRight
 	// etc ....
@@ -54,6 +77,7 @@ const (
 type bindFunc func(p1 PlayerState, p2 PlayerState) (PlayerState, PlayerState)
 
 func (i InputFuncsDependencies) IdleFunc(p1 PlayerState, p2 PlayerState) (PlayerState, PlayerState) {
+	p1.Action = Idle
 	return p1, p2
 }
 
@@ -67,12 +91,11 @@ func (i InputFuncsDependencies) WalkLeftFunc(p1 PlayerState, p2 PlayerState) (Pl
 	if p1Pos.X < 0 {
 		p1Pos.X = 0
 	}
-
-	fmt.Println("hello from my walking function")
-	fmt.Println(p1Pos.X)
+	p1.Action = Walking
 	return p1, p2
 }
 
+//
 // so what's the solution ? , either make a middle ware that returns a function that takes the state only
 // or make a middleware
 
@@ -106,10 +129,12 @@ var (
 	// if players state would be to saperate this would become two variables , ugly
 	DefaultState = State{
 		P1State: PlayerState{
-			Position: Point{10, 10},
+			Position: Point{40, 10},
+			Action:   Idle,
 		},
 		P2State: PlayerState{
 			Position: Point{30, 10},
+			Action:   Idle,
 		},
 	}
 
@@ -117,42 +142,13 @@ var (
 		Health: 100,
 		Speed:  2,
 		Hitbox: Hitbox{Point{-1, -1}, Point{1, 1}},
-		// optimize animations coding , maybe make a constructer and extract it from an outer file
-		AnimationSet: AnimationSet{
-			Idle: Animation{
-				Panels: [][]string{
-					{
-						"*-*",
-						"-|-",
-						" | ",
-					},
-				},
-				RepeatingAnimation: true,
-				CurrentFrame:       0,
-				AnimationFrames:    2,
-			},
-
-			Walking: Animation{
-				Panels: [][]string{
-					{
-						"*-*",
-						"-|-",
-						" | ",
-					},
-					{
-						"*-*",
-						"-|-",
-						"/ \\",
-					},
-				},
-				RepeatingAnimation: true,
-				CurrentFrame:       0,
-				AnimationFrames:    2,
-			},
-		},
+		Name:   "default",
 	}
 
 	AnimationIsOver = errors.New("animation is over")
+	AssetNotFound   = errors.New("asset not found!")
+	TypeMismatchErr = errors.New("expected type doesn't match the asset type ") // this error shall be only used for assets , you can change it later if you used it for anything else
+
 )
 
 // how do i tell the renderer what the charecter is currently doing ?
@@ -166,57 +162,178 @@ type Hitbox struct {
 
 // this is a problem for later , just a sketch
 // first layer is the panel layer , the other layer is for 2d rendering
-type Animation struct {
-	Panels             [][]string
+type AnimationData struct {
+	// Panels             [][]string
+	FramesCount        int
 	CurrentFrame       int
-	AnimationFrames    int
 	RepeatingAnimation bool
 }
 
-// returns the next frame in the animation sequence
-func (A *Animation) getNextFrame() ([]string, error) {
-	if A.CurrentFrame == A.AnimationFrames {
-		if !A.RepeatingAnimation {
-			return []string{}, AnimationIsOver
-		}
-		A.CurrentFrame = 0
-	}
-	A.CurrentFrame++
+type panels [][]string
 
-	return A.Panels[A.CurrentFrame-1], nil
+type AnimationConfig struct {
+	Panels             [][]string `json:"panels"`
+	RepeatingAnimation bool       `json:"repeating_animation"`
+	Action             string     `json:"action"`
+}
+
+// don't touch this
+func (AS *AssetsChunks) LoadAnimationSet(filePath string, ID string) error {
+	file, err := os.ReadFile(filePath)
+	if err != nil {
+		return err
+	}
+	var cfgs []AnimationConfig
+	json.Unmarshal(file, &cfgs)
+
+	for _, cfg := range cfgs {
+		AS.loadAnimation(cfg, ID)
+	}
+
+	return nil
+}
+
+func parseAnimCfg(AC AnimationConfig) (AnimationData, panels) {
+	return AnimationData{
+		CurrentFrame:       1,
+		RepeatingAnimation: AC.RepeatingAnimation,
+	}, AC.Panels
+
+}
+
+func FormatFrameKey(ownerID string, action Action, frameNumber int) string {
+	return "frame" + action.String() + ownerID + strconv.Itoa(frameNumber)
+}
+
+func FormatAnimDataKey(ownerID string, action Action) string {
+	return "animData" + action.String() + ownerID
+}
+
+// make it go through the animation add the animation and add it's data saperately
+func (AS *AssetsChunks) loadAnimation(AC AnimationConfig, ID string) {
+	action, err := ParseAction(AC.Action)
+	if err != nil {
+		panic("this action does not exist , refer to example animation set")
+	}
+
+	data, pnls := parseAnimCfg(AC)
+	data.FramesCount = len(pnls)
+	AS.chunksMap[FormatAnimDataKey(ID, action)] = data
+	for frameNum, frame := range pnls {
+		AS.chunksMap[FormatFrameKey(ID, action, (frameNum+1))] = frame
+	}
+}
+
+func (c Charecter) getAnimationSetPath(dataPath string) string {
+	formattedName := strings.ReplaceAll(c.Name, " ", "_")
+	return fmt.Sprintf("%s/assets/animations/%s.json", dataPath, formattedName)
+}
+
+// we need to loop over the list of animations
+// and we also need to validate the final map
+// maybve we can do this by uhmm a small program inside the assets to validate all the assets
+
+// returns the next frame in the animation sequence
+
+type assetsProvider interface {
+	GetFrame(ID string, action Action, frameIndex int) ([]string, error)
+	GetAnimData(ID string, action Action) (AnimationData, error)
+}
+
+// this assets provider stores needed assets for the match in memory
+type AssetsChunks struct {
+	chunksMap map[string]any
+}
+
+// the idea is to not give direct access to the user for asset chunks ,
+func NewAssets() *AssetsChunks {
+	return &AssetsChunks{
+		chunksMap: map[string]any{},
+	}
+}
+
+// getAnimation uses the prefix thing for animations
+func (AC *AssetsChunks) GetFrame(ID string, action Action, frameIndex int) ([]string, error) {
+	anim, ok := AC.chunksMap[FormatFrameKey(ID, action, frameIndex)]
+	if !ok {
+		return []string{}, AssetNotFound
+	}
+
+	if reflect.TypeOf(anim) != reflect.TypeOf([]string{}) {
+		return []string{}, TypeMismatchErr
+	}
+
+	return anim.([]string), nil
+}
+
+func (AC *AssetsChunks) GetAnimData(ID string, action Action) (AnimationData, error) {
+	animData, ok := AC.chunksMap[FormatAnimDataKey(ID, action)]
+	if !ok {
+		return AnimationData{}, AssetNotFound
+	}
+
+	if reflect.TypeOf(animData) != reflect.TypeOf(AnimationData{}) {
+		return AnimationData{}, TypeMismatchErr
+	}
+
+	return animData.(AnimationData), nil
 }
 
 type Game struct {
-	Config     Config
-	State      State
-	Charecters Charecters
-	binds      binds
+	Config         Config
+	State          State
+	binds          binds
+	AssetsProvider assetsProvider
 }
 
-type ActionFunc func(State) State
+type ActionFunc func(State) (State, error)
+
+// changes the animation to the current action's animation if the action has changed
+func handleAnim(AF bindFunc, AP assetsProvider) ActionFunc {
+
+	return func(s State) (State, error) {
+		newP1, newP2 := AF(s.P1State, s.P2State)
+		if s.P1State.Action != newP1.Action {
+			animData, err := AP.GetAnimData(newP1.OwnerID, newP1.Action)
+			newP1.AnimState = animData
+
+			if err != nil {
+				return State{}, err
+			}
+		}
+		newAnimState, err := newP1.AnimState.progressAnimState()
+		newP1.AnimState = newAnimState
+		if err != nil {
+			return State{}, err
+		}
+		return State{
+			P1State: newP1,
+			P2State: newP2,
+		}, nil
+
+	}
+}
 
 func (g Game) GetBindFunc(I Input, p Player) ActionFunc {
 
-	bindFunc := g.binds[I]
-	if p == Player1 {
-		return func(s State) State {
-			p1S, p2S := bindFunc(s.P1State, s.P2State)
-			fmt.Println(p1S)
-			return State{
-				P1State: p1S,
-				P2State: p2S,
-			}
-		}
-	}
-	// so it must be player 2 now
-	return func(s State) State {
-		p1S, p2S := bindFunc(s.P2State, s.P1State)
+	// so we'd have tjk
+	actionFunc := handleAnim(g.binds[I], g.AssetsProvider)
 
-		return State{
-			P1State: p2S,
-			P2State: p1S,
+	// so it must be player 2 now
+	if p == Player2 {
+		actionFunc = func(s State) (State, error) {
+			newState, err := actionFunc(s)
+
+			return State{
+				P1State: newState.P2State,
+				P2State: newState.P1State,
+			}, err
 		}
+
 	}
+
+	return actionFunc
+
 }
 
 type Charecters struct {
@@ -231,21 +348,19 @@ type State struct {
 	P2State PlayerState
 }
 
-type AnimationSet map[Action]Animation
-
 // we want a charecter to be an instance of type struct charecter
 // we want each charecter to have it's own functions , every charecter have the same set of functions but they are different within
 // we want charecters to also hold in values for their own , like a charecter having a mana bar , they must have custom variables
 // where would the attack , abilities activation go , is in the client
 type Charecter struct {
-	Health       int
-	Speed        int
-	Hitbox       Hitbox
-	Attack       func(State)
-	Ability1     func(State)
-	Entity       map[string]any
-	AnimationSet AnimationSet
-	ActiveFrame  []string
+	Health      int
+	Speed       int
+	Hitbox      Hitbox
+	Attack      func(State)
+	Ability1    func(State)
+	Entity      map[string]any
+	ActiveFrame []string
+	Name        string
 }
 
 // sprites vs animations
@@ -263,15 +378,17 @@ type Resulotion struct {
 	Height int `json:"height"`
 }
 
+// this is the best thing i have been doing ever
 // have somewhat like an asset for animations , it will load the assets for the charecters at the start of the game , this will also allow for custom assets without recompiling the game
 // pretty much an essantial for this
 // since we are using a function to load them , we can add some syntax proccessing to it and change it's format to something better usable
 
 type PlayerState struct {
-	Position         Point
-	Action           Action
-	CurrentAnimation *Animation
-	Direction        Direction
+	Position  Point
+	Action    Action
+	Direction Direction
+	AnimState AnimationData
+	OwnerID   string
 }
 
 type Point struct {
@@ -285,11 +402,25 @@ type InputFuncsDependencies struct {
 	Cfg Config
 }
 
+func (AS AnimationData) progressAnimState() (AnimationData, error) {
+	AS.CurrentFrame++
+	if AS.CurrentFrame > AS.FramesCount {
+		if !AS.RepeatingAnimation {
+			return AnimationData{}, AnimationIsOver
+		}
+		AS.CurrentFrame = 1
+	}
+
+	return AS, nil
+}
+
 // do i have to make the constructer function also add the players ?
 // welp you can't have a game without players , none of the methods would work then
 // we should throw in the default states , get the chareacters from the input and the config file path too
-func NewGame(cfgFilePath string, charecters Charecters) (Game, error) {
-	// composing the game
+// assets and pres
+func NewGame(dataPath string, charecters Charecters) (Game, error) {
+	// composing the game\
+	cfgFilePath := dataPath + "/config.json"
 	data, err := os.ReadFile(cfgFilePath)
 
 	if err != nil {
@@ -306,21 +437,46 @@ func NewGame(cfgFilePath string, charecters Charecters) (Game, error) {
 		Cfg: c,
 	}
 
+	ap := NewAssets()
+	err = ap.LoadAnimationSet(DefaultCharecter.getAnimationSetPath(dataPath), p1ID)
+	if err != nil {
+		return Game{}, err
+	}
+	err = ap.LoadAnimationSet(DefaultCharecter.getAnimationSetPath(dataPath), p2ID)
+	if err != nil {
+		return Game{}, err
+	}
+
+	currState := DefaultState
+	animS, err := ap.GetAnimData(p1ID, Idle)
+	animS2, err := ap.GetAnimData(p2ID, Idle)
+	if err != nil {
+		return Game{}, err
+	}
+	currState.P1State.AnimState = animS
+	currState.P1State.OwnerID = p1ID
+	currState.P2State.AnimState = animS2
+	currState.P2State.OwnerID = p2ID
 	g := Game{
-		Config:     c,
-		State:      DefaultState,
-		Charecters: charecters,
-		binds:      bindControls(i),
+		Config:         c,
+		State:          currState,
+		binds:          bindControls(i),
+		AssetsProvider: ap,
 	}
 
 	return g, nil
 
 }
 
+//
 // state should tell the renderer everything it needs to render the scene
 
 func (game Game) GenerateNextState(s State, inputs Input) State {
-	NewState := game.GetBindFunc(inputs, Player1)(s)
+	NewState, err := game.GetBindFunc(inputs, Player1)(s)
+	if err != nil {
+		// do logging here
+		log.Fatal("error while executing the bind func to generate next state", err.Error())
+	}
 	return NewState
 }
 
@@ -370,11 +526,11 @@ func (game Game) MakeFrame(s State) frame {
 	}
 	// second layer for now : rendering the charecters
 	position := game.State.P1State.Position
-	animationFrame, err := s.P1State.CurrentAnimation.getNextFrame()
+	animationFrame, err := game.AssetsProvider.GetFrame(game.State.P1State.OwnerID, game.State.P1State.Action, game.State.P1State.AnimState.CurrentFrame)
 	if err != nil {
 		fmt.Println(err) // improve the error handling here
 	}
-	f = f.renderSprite(animationFrame, red, position)
+	f = f.renderSprite(animationFrame, green, position)
 	// next step would be to render the actual charecter instead of this
 
 	return f

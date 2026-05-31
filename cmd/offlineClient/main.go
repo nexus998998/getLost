@@ -11,7 +11,7 @@ import (
 )
 
 var (
-	configFilePath = "./config.json"
+	gameSet = "./baseGameSet"
 )
 
 // keyboard.Listen
@@ -24,14 +24,12 @@ func main() {
 		Char1: game.DefaultCharecter,
 		Char2: game.DefaultCharecter,
 	}
-	g, err := game.NewGame(configFilePath, chars)
+	g, err := game.NewGame(gameSet, chars)
 	if err != nil {
 		log.Fatal(err)
 	}
-	anim := chars.Char1.AnimationSet[game.Walking]
-	g.State.P1State.CurrentAnimation = &anim
-	// game loop
-	// what's the plan , init the game , make a rendering loop and yeah that's it
+	// IdleAnimInstance := g.Charecters.Char1.AnimationSet[game.Walking]
+	// g.State.P1State.CurrentAnimation = &IdleAnimInstance
 
 	go func() {
 		for {
@@ -53,10 +51,9 @@ func main() {
 	for {
 		g.State = g.GenerateNextState(g.State, input)
 
-		f := g.MakeFrame(g.State)
-		f.RenderFrame()
+		g.MakeFrame(g.State).RenderFrame()
 		input = game.None // thhis is confusing please change it
-		time.Sleep(time.Millisecond * 100)
+		time.Sleep(time.Millisecond * 50)
 
 	}
 }
