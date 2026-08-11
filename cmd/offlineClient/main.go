@@ -20,11 +20,7 @@ var (
 var input game.Input
 
 func main() {
-	chars := game.Charecters{
-		Char1: game.DefaultCharecter,
-		Char2: game.DefaultCharecter,
-	}
-	g, err := game.NewGame(gameSet, chars)
+	g, err := game.NewGame(gameSet, "default", "default")
 	if err != nil {
 		log.Fatal(err)
 	}
